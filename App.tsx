@@ -14,6 +14,7 @@ import { createBird, createPipe, GameEntities, moveBird, Physics, setupBirdVeloc
 declare module 'matter-js' {
     interface Body {
         scored?: boolean;
+        isTop?: boolean;
     }
 }
 
@@ -282,7 +283,25 @@ function App() {
     // Scoring system
     const ScoreSystem = (entities: GameEntities) => {
         if (gameState === GAME_STATES.PLAYING) {
-            setScore(entities.score.value);
+            const bird = entities.bird.body;
+            let newScore = entities.score.value;
+            
+            // Check if bird has passed any pipes
+            entities.pipes.forEach(pipe => {
+                // Only check bottom pipes to avoid double counting
+                if (!pipe.body.isTop && !pipe.body.scored) {
+                    // Check if bird has passed the pipe
+                    if (bird.position.x > pipe.body.position.x + PIPE_WIDTH / 2) {
+                        pipe.body.scored = true;
+                        newScore += 1;
+                        console.log('Score increased! New score:', newScore);
+                    }
+                }
+            });
+            
+            // Update score in entities
+            entities.score.value = newScore;
+            setScore(newScore);
         }
         return entities;
     };
