@@ -207,7 +207,8 @@ function App() {
             },
         };
         
-        // Trigger full re-render with fresh entities
+        // CRUCIAL: Swap entities in the running GameEngine for a true fresh restart
+        (gameEngineRef.current as any)?.swap(freshEntities);
         setEntities(freshEntities);
         
         console.log('=== COMPLETE GAME RESET FINISHED ===');
