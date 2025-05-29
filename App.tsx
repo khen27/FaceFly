@@ -1,14 +1,14 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { registerRootComponent } from 'expo';
-import * as FileSystem from 'expo-file-system';
 import Matter from 'matter-js';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Keyboard, KeyboardEvent, Platform, StyleSheet, Text, TouchableWithoutFeedback, View } from 'react-native';
 import { GameEngine } from 'react-native-game-engine';
 
 import Bird from './components/Bird';
 import Pipe from './components/Pipe';
-import { COLORS, GAME_STATES, SCREEN_WIDTH, SPAWN_INTERVAL } from './game/constants';
-import { createBird, createPipe, GameEntities, moveBird, Physics, setupWorld } from './game/physics';
+import { COLORS, GAME_STATES, PIPE_SPEED, PIPE_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH, SPAWN_INTERVAL } from './game/constants';
+import { createBird, createPipe, GameEntities, moveBird, Physics, setupBirdVelocityClamping, setupWorld } from './game/physics';
 
 // Extend Matter.Body type to include our custom properties
 declare module 'matter-js' {
@@ -31,24 +31,74 @@ function App() {
     const [gameState, setGameState] = useState<GameStateType>(GAME_STATES.READY);
     const [score, setScore] = useState(0);
     const [highScore, setHighScore] = useState(0);
-    const [gameEngine, setGameEngine] = useState<GameEngine | null>(null);
+    const [lastPipeSpawn, setLastPipeSpawn] = useState(0);
+    const [entities, setEntities] = useState<GameEntities | null>(null);
+    const gameEngineRef = useRef<GameEngine | null>(null);
+    const engineRef = useRef<Matter.Engine>(setupWorld());
+    const birdRef = useRef<Matter.Body>(createBird());
 
     // Load high score on mount
     useEffect(() => {
-        loadHighScore();
+        const initializeGame = async () => {
+            try {
+                // Initialize AsyncStorage
+                const savedScore = await AsyncStorage.getItem('FaceFly:highScore');
+                if (savedScore !== null) {
+                    setHighScore(parseInt(savedScore, 10));
+                }
+            } catch (error) {
+                // Silently handle storage errors - default to 0
+                console.log('Storage not available, using default high score');
+            }
+
+            // Create initial entities
+            const engine = engineRef.current;
+            const bird = birdRef.current;
+            Matter.World.add(engine.world, [bird]);
+            
+            // Setup velocity clamping for Flappy Bird physics
+            setupBirdVelocityClamping(engine, bird);
+            
+            setEntities({
+                physics: { engine, world: engine.world },
+                bird: {
+                    body: bird,
+                    size: 40,
+                    renderer: Bird,
+                },
+                pipes: [],
+                score: {
+                    value: 0,
+                    highScore: 0,
+                },
+                gameState: {
+                    current: GAME_STATES.READY,
+                },
+            });
+        };
+
+        initializeGame();
     }, []);
+
+    // Keep highScore in entities in sync
+    useEffect(() => {
+        if (entities) {
+            setEntities({ ...entities, score: { ...entities.score, highScore } });
+        }
+    }, [highScore]);
 
     // Add keyboard controls for simulator
     useEffect(() => {
         if (__DEV__ && Platform.OS === 'ios') {
             const handleKeyboardShow = (event: KeyboardEvent) => {
                 // Space key press simulation for development
+                if (!entities || !entities.bird || !entities.bird.body) return;
                 if (gameState === GAME_STATES.READY) {
                     startGame();
-                    moveBird(bird);
+                    moveBird(entities.bird.body);
                 }
                 if (gameState === GAME_STATES.PLAYING) {
-                    moveBird(bird);
+                    moveBird(entities.bird.body);
                 }
             };
 
@@ -58,175 +108,254 @@ function App() {
                 keyboardShowListener.remove();
             };
         }
-    }, [gameState]);
-
-    const getStorageDirectory = async () => {
-        try {
-            const dir = FileSystem.documentDirectory;
-            if (!dir) {
-                console.warn('Document directory not available');
-                return null;
-            }
-            return dir;
-        } catch (error) {
-            console.warn('Error accessing document directory:', error);
-            return null;
-        }
-    };
-
-    const loadHighScore = async () => {
-        try {
-            const dir = await getStorageDirectory();
-            if (!dir) return;
-            
-            const filePath = `${dir}highscore.txt`;
-            const fileInfo = await FileSystem.getInfoAsync(filePath);
-            
-            if (!fileInfo.exists) {
-                await FileSystem.writeAsStringAsync(filePath, '0');
-                return;
-            }
-            
-            const savedHighScore = await FileSystem.readAsStringAsync(filePath);
-            if (savedHighScore) {
-                setHighScore(parseInt(savedHighScore, 10));
-            }
-        } catch (error) {
-            console.warn('Error loading high score:', error);
-            setHighScore(0);
-        }
-    };
+    }, [gameState, entities]);
 
     const saveHighScore = async (newHighScore: number) => {
         try {
-            const dir = await getStorageDirectory();
-            if (!dir) return;
-            
-            const filePath = `${dir}highscore.txt`;
-            await FileSystem.writeAsStringAsync(filePath, newHighScore.toString());
+            await AsyncStorage.setItem('FaceFly:highScore', newHighScore.toString());
         } catch (error) {
-            console.warn('Error saving high score:', error);
+            // Silently handle storage errors
+            console.log('Unable to save high score');
         }
     };
 
-    // Initialize game
-    const engine = setupWorld();
-    const bird = createBird();
-    Matter.World.add(engine.world, [bird]);
-
-    const entities: GameEntities = {
-        physics: { engine, world: engine.world },
-        bird: {
-            body: bird,
-            size: 40,
-            renderer: Bird,
-        },
-        pipes: [],
-        score: {
-            value: 0,
-            highScore: highScore,
-        },
-        gameState: {
-            current: gameState,
-        },
-    };
-
-    // Game systems
     const onEvent = (e: { type: string }) => {
         if (e.type === 'game-over') {
             setGameState(GAME_STATES.GAME_OVER);
             if (score > highScore) {
                 setHighScore(score);
-                saveHighScore(score);
+                saveHighScore(score).catch(console.log);
             }
             setTimeout(() => {
                 resetGame();
-            }, 1500);
+            }, 2000);
         }
     };
 
     const resetGame = () => {
-        setGameState(GAME_STATES.READY);
-        setScore(0);
-        Matter.Body.setPosition(bird, { x: SCREEN_WIDTH / 4, y: 300 });
+        const engine = engineRef.current;
+        const bird = birdRef.current;
+        if (entities) {
+            // Remove all pipes from physics world
+            entities.pipes.forEach(pipe => {
+                Matter.World.remove(engine.world, pipe.body);
+            });
+            
+            // Remove dynamic pipe entities
+            Object.keys(entities).forEach(key => {
+                if (key.startsWith('pipe_')) {
+                    delete entities[key];
+                }
+            });
+        }
+        // Reset bird
+        Matter.Body.setPosition(bird, { x: SCREEN_WIDTH / 4, y: SCREEN_HEIGHT / 2 });
         Matter.Body.setVelocity(bird, { x: 0, y: 0 });
         Matter.Body.setAngle(bird, 0);
-        entities.pipes = [];
+        
+        // Setup velocity clamping for Flappy Bird physics (needed after reset)
+        setupBirdVelocityClamping(engine, bird);
+        
+        // Reset score and pipes
+        setScore(0);
+        setEntities({
+            physics: { engine, world: engine.world },
+            bird: {
+                body: bird,
+                size: 40,
+                renderer: Bird,
+            },
+            pipes: [],
+            score: {
+                value: 0,
+                highScore: highScore,
+            },
+            gameState: {
+                current: GAME_STATES.READY,
+            },
+        });
+        setGameState(GAME_STATES.READY);
+        setLastPipeSpawn(0);
     };
 
     const startGame = () => {
-        if (gameState !== GAME_STATES.PLAYING) {
-            setGameState(GAME_STATES.PLAYING);
-        }
+        console.log('Starting game');
+        setGameState(GAME_STATES.PLAYING);
+        setLastPipeSpawn(0); // Reset spawn timer
     };
 
     // Pipe spawning system
-    const SpawnPipes = (entities: GameEntities, { time }: { time: { delta: number, current: number, previous: number } }) => {
-        if (gameState === GAME_STATES.PLAYING && time.current - (time.previous || 0) > SPAWN_INTERVAL) {
-            const { top, bottom } = createPipe(SCREEN_WIDTH + 100);
-            Matter.World.add(engine.world, [top, bottom]);
-            entities.pipes.push(
-                { body: top, renderer: Pipe },
-                { body: bottom, renderer: Pipe }
-            );
+    const SpawnPipes = (entities: GameEntities, { time }: { time: { current: number, delta: number } }) => {
+        if (!entities || !gameState || gameState !== GAME_STATES.PLAYING) {
+            console.log('SpawnPipes: Not in playing state or entities missing');
+            return entities;
         }
+
+        // Debug current state
+        console.log('=== SpawnPipes System State ===');
+        console.log('Game State:', gameState);
+        console.log('Current Pipes:', entities.pipes.length);
+        console.log('Physics World Bodies:', entities.physics.engine.world.bodies.length);
+        console.log('Time:', { current: time.current, delta: time.delta });
+        console.log('Last Spawn:', lastPipeSpawn);
+        console.log('============================');
+
+        const currentTime = time.current;
+        if (!lastPipeSpawn || currentTime - lastPipeSpawn >= SPAWN_INTERVAL) {
+            console.log('Attempting to spawn new pipes');
+            
+            // Create pipes
+            const { top, bottom } = createPipe(SCREEN_WIDTH + PIPE_WIDTH);
+            
+            // Verify pipe creation
+            console.log('Created new pipes:', {
+                top: { x: top.position.x, y: top.position.y },
+                bottom: { x: bottom.position.x, y: bottom.position.y }
+            });
+            
+            // Add to physics world
+            Matter.World.add(entities.physics.engine.world, [top, bottom]);
+            
+            // Verify physics world addition
+            console.log('Physics world bodies after addition:', entities.physics.engine.world.bodies.length);
+            
+            // Create unique keys for each pipe pair
+            const pipeId = Date.now();
+            const topPipeKey = `pipe_top_${pipeId}`;
+            const bottomPipeKey = `pipe_bottom_${pipeId}`;
+            
+            // Add pipes as individual entities to the game engine
+            entities[topPipeKey] = {
+                body: top,
+                renderer: Pipe,
+            };
+            entities[bottomPipeKey] = {
+                body: bottom,
+                renderer: Pipe,
+            };
+            
+            // Also update our tracking array
+            entities.pipes = [
+                ...entities.pipes,
+                { body: top, renderer: Pipe, isTop: true },
+                { body: bottom, renderer: Pipe, isTop: false }
+            ];
+            
+            console.log('Updated pipe entities:', entities.pipes.length);
+            console.log('Added entities:', topPipeKey, bottomPipeKey);
+            
+            setLastPipeSpawn(currentTime);
+        }
+
+        // Move existing pipes
+        if (entities.pipes.length > 0) {
+            const moveAmount = (PIPE_SPEED * time.delta) / 16.667;
+            entities.pipes.forEach((pipe, index) => {
+                const oldX = pipe.body.position.x;
+                Matter.Body.translate(pipe.body, { x: -moveAmount, y: 0 });
+                const newX = pipe.body.position.x;
+                console.log(`Pipe ${index} moved: ${oldX} -> ${newX}`);
+            });
+            
+            // Clean up pipes that have moved off screen
+            const pipeKeysToRemove: string[] = [];
+            Object.keys(entities).forEach(key => {
+                if (key.startsWith('pipe_') && entities[key].body && entities[key].body.position.x < -PIPE_WIDTH) {
+                    console.log('Removing off-screen pipe:', key);
+                    Matter.World.remove(entities.physics.engine.world, entities[key].body);
+                    pipeKeysToRemove.push(key);
+                }
+            });
+            
+            // Remove off-screen pipes from entities
+            pipeKeysToRemove.forEach(key => {
+                delete entities[key];
+            });
+            
+            // Update tracking array
+            entities.pipes = entities.pipes.filter(pipe => pipe.body.position.x > -PIPE_WIDTH);
+        }
+
         return entities;
     };
 
     // Scoring system
     const ScoreSystem = (entities: GameEntities) => {
         if (gameState === GAME_STATES.PLAYING) {
-            entities.pipes.forEach(pipe => {
-                if (pipe.body.position.x + 60 < SCREEN_WIDTH / 4 && !pipe.body.scored) {
-                    pipe.body.scored = true;
-                    setScore(prev => prev + 1);
-                }
-            });
+            setScore(entities.score.value);
         }
         return entities;
     };
 
+    // Touch handler always uses the current bird body
+    const handleFlap = () => {
+        if (!entities || !entities.bird || !entities.bird.body) return;
+        if (gameState === GAME_STATES.READY) {
+            startGame();
+            moveBird(entities.bird.body);
+        } else if (gameState === GAME_STATES.PLAYING) {
+            moveBird(entities.bird.body);
+        }
+    };
+
+    useEffect(() => {
+        // Log game state changes
+        console.log('=== Game State Change ===');
+        console.log('Current state:', gameState);
+        console.log('Entities:', entities ? Object.keys(entities) : 'none');
+        console.log('Pipe count:', entities?.pipes?.length || 0);
+        console.log('========================');
+    }, [gameState, entities]);
+
+    if (!entities) return null;
+
     return (
-        <TouchableWithoutFeedback onPress={() => {
-            if (gameState === GAME_STATES.READY) {
-                startGame();
-                moveBird(bird);
-            }
-            if (gameState === GAME_STATES.PLAYING) {
-                moveBird(bird);
-            }
-        }}>
-            <View style={styles.container}>
-                <GameEngine
-                    ref={(ref) => setGameEngine(ref)}
-                    style={styles.gameContainer}
-                    systems={[Physics, SpawnPipes, ScoreSystem]}
-                    entities={entities}
-                    onEvent={onEvent}
-                    running={gameState === GAME_STATES.PLAYING}
-                />
-                
-                {gameState === GAME_STATES.READY && (
-                    <View style={styles.readyContainer}>
-                        <Text style={[styles.readyText, styles.textShadow]}>
-                            {__DEV__ && Platform.OS === 'ios' ? 'Tap or Press Space to Start' : 'Tap to Start'}
-                        </Text>
+        <View style={styles.container}>
+            <GameEngine
+                ref={gameEngineRef}
+                style={[styles.gameContainer, { 
+                    backgroundColor: COLORS.BACKGROUND,
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                }]}
+                systems={[Physics, SpawnPipes, ScoreSystem]}
+                entities={entities}
+                onEvent={onEvent}
+                running={gameState === GAME_STATES.PLAYING}
+            >
+                <TouchableWithoutFeedback onPress={handleFlap}>
+                    <View style={[styles.touchableArea, { 
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'transparent',
+                    }]}>
+                        {gameState === GAME_STATES.READY && (
+                            <View style={styles.readyContainer}>
+                                <Text style={[styles.readyText, styles.textShadow]}>
+                                    {__DEV__ && Platform.OS === 'ios' ? 'Tap or Press Space to Start' : 'Tap to Start'}
+                                </Text>
+                            </View>
+                        )}
+                        {gameState === GAME_STATES.PLAYING && (
+                            <Text style={[styles.scoreText, styles.textShadow]}>{score}</Text>
+                        )}
+                        {gameState === GAME_STATES.GAME_OVER && (
+                            <View style={styles.gameOverContainer}>
+                                <Text style={[styles.gameOverText, styles.textShadow]}>Game Over</Text>
+                                <Text style={[styles.scoreText, styles.textShadow]}>Score: {score}</Text>
+                                <Text style={[styles.highScoreText, styles.textShadow]}>High Score: {highScore}</Text>
+                            </View>
+                        )}
                     </View>
-                )}
-
-                {gameState === GAME_STATES.PLAYING && (
-                    <Text style={[styles.scoreText, styles.textShadow]}>{score}</Text>
-                )}
-
-                {gameState === GAME_STATES.GAME_OVER && (
-                    <View style={styles.gameOverContainer}>
-                        <Text style={[styles.gameOverText, styles.textShadow]}>Game Over</Text>
-                        <Text style={[styles.scoreText, styles.textShadow]}>Score: {score}</Text>
-                        <Text style={[styles.highScoreText, styles.textShadow]}>High Score: {highScore}</Text>
-                    </View>
-                )}
-            </View>
-        </TouchableWithoutFeedback>
+                </TouchableWithoutFeedback>
+            </GameEngine>
+        </View>
     );
 }
 
@@ -234,8 +363,18 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: COLORS.BACKGROUND,
+        position: 'relative',
     },
     gameContainer: {
+        flex: 1,
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+    },
+    touchableArea: {
+        flex: 1,
         position: 'absolute',
         top: 0,
         left: 0,
@@ -251,6 +390,7 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         backgroundColor: 'transparent',
+        zIndex: 1,
     },
     readyText: {
         fontSize: 32,

@@ -2,16 +2,13 @@ import Matter from 'matter-js';
 import {
     BIRD_ROTATION_FACTOR,
     BIRD_SIZE,
-    GRAVITY,
-    JUMP_FORCE,
-    MAX_PIPE_HEIGHT,
     MIN_PIPE_HEIGHT,
     PIPE_GAP,
-    PIPE_SPEED,
     PIPE_WIDTH,
     SCREEN_HEIGHT,
-    SCREEN_WIDTH,
+    SCREEN_WIDTH
 } from './constants';
+const { Events } = Matter;
 
 // Types
 export type GameEntities = {
@@ -22,13 +19,12 @@ export type GameEntities = {
     bird: {
         body: Matter.Body;
         size: number;
-        color?: string;
         renderer: React.FC<any>;
     };
     pipes: Array<{
         body: Matter.Body;
-        color?: string;
         renderer: React.FC<any>;
+        isTop?: boolean;
     }>;
     score: {
         value: number;
@@ -37,14 +33,18 @@ export type GameEntities = {
     gameState: {
         current: string;
     };
+    [key: string]: any; // Allow dynamic pipe entities
 };
 
 // Physics setup
 export const setupWorld = (): Matter.Engine => {
     const engine = Matter.Engine.create({
         enableSleeping: false,
-        gravity: { x: 0, y: GRAVITY, scale: 0.001 },
     });
+    
+    // Set floaty Flappy Bird gravity
+    engine.world.gravity.y = 0.6;
+    
     return engine;
 };
 
@@ -56,33 +56,80 @@ export const createBird = (): Matter.Body => {
         BIRD_SIZE / 2,
         {
             label: 'Bird',
+            density: 0.002,
+            frictionAir: 0.02,
             restitution: 0,
-            friction: 1,
-            density: 0.001,
         }
     );
 };
 
+// Setup velocity clamping for the bird
+export const setupBirdVelocityClamping = (engine: Matter.Engine, bird: Matter.Body): void => {
+    // Remove any existing beforeUpdate listeners to prevent accumulation
+    Events.off(engine, 'beforeUpdate');
+    
+    // Add the velocity clamping listener
+    Events.on(engine, 'beforeUpdate', () => {
+        const vy = bird.velocity.y;
+        if (vy > 15) Matter.Body.setVelocity(bird, { x: 0, y: 15 });
+        if (vy < -12) Matter.Body.setVelocity(bird, { x: 0, y: -12 });
+    });
+};
+
 // Pipe creation
 export const createPipe = (x: number): { top: Matter.Body; bottom: Matter.Body } => {
-    const gapPosition = Math.random() * (MAX_PIPE_HEIGHT - MIN_PIPE_HEIGHT) + MIN_PIPE_HEIGHT;
+    console.log('Creating pipes at x:', x);
     
+    // Calculate heights ensuring pipes are visible
+    const gapPosition = MIN_PIPE_HEIGHT + Math.random() * (SCREEN_HEIGHT - 2 * MIN_PIPE_HEIGHT - PIPE_GAP);
+    
+    // Create top pipe
+    const topHeight = gapPosition;
     const topPipe = Matter.Bodies.rectangle(
         x,
-        gapPosition - PIPE_GAP / 2,
+        topHeight / 2,
         PIPE_WIDTH,
-        gapPosition,
-        { isStatic: true, label: 'Pipe' }
+        topHeight,
+        { 
+            isStatic: true,
+            label: 'Pipe',
+            friction: 1,
+            restitution: 0.2,
+        }
     );
 
+    // Create bottom pipe
+    const bottomHeight = SCREEN_HEIGHT - gapPosition - PIPE_GAP;
     const bottomPipe = Matter.Bodies.rectangle(
         x,
-        gapPosition + PIPE_GAP / 2 + (SCREEN_HEIGHT - gapPosition - PIPE_GAP / 2) / 2,
+        SCREEN_HEIGHT - bottomHeight / 2,
         PIPE_WIDTH,
-        SCREEN_HEIGHT - gapPosition - PIPE_GAP / 2,
-        { isStatic: true, label: 'Pipe' }
+        bottomHeight,
+        { 
+            isStatic: true,
+            label: 'Pipe',
+            friction: 1,
+            restitution: 0.2,
+        }
     );
 
+    // Add custom property to identify pipes
+    Matter.Body.set(topPipe, { isTop: true });
+    Matter.Body.set(bottomPipe, { isTop: false });
+    
+    console.log('Top pipe:', {
+        x: topPipe.position.x,
+        y: topPipe.position.y,
+        height: topHeight,
+        bounds: topPipe.bounds
+    });
+    console.log('Bottom pipe:', {
+        x: bottomPipe.position.x,
+        y: bottomPipe.position.y,
+        height: bottomHeight,
+        bounds: bottomPipe.bounds
+    });
+    
     return { top: topPipe, bottom: bottomPipe };
 };
 
@@ -95,16 +142,8 @@ export const Physics = (entities: GameEntities, { time, dispatch }: { time: { de
 
     // Update bird rotation based on velocity
     const bird = entities.bird.body;
-    const rotation = bird.velocity.y * BIRD_ROTATION_FACTOR;
+    const rotation = Math.min(Math.max(bird.velocity.y * BIRD_ROTATION_FACTOR, -Math.PI / 4), Math.PI / 2);
     Matter.Body.setAngle(bird, rotation);
-
-    // Move pipes left
-    entities.pipes.forEach(pipe => {
-        Matter.Body.translate(pipe.body, { x: -PIPE_SPEED, y: 0 });
-    });
-
-    // Remove off-screen pipes
-    entities.pipes = entities.pipes.filter(pipe => pipe.body.position.x > -PIPE_WIDTH);
 
     // Check collisions
     const collisions = Matter.Query.collides(bird, entities.pipes.map(pipe => pipe.body));
@@ -120,11 +159,12 @@ export const Physics = (entities: GameEntities, { time, dispatch }: { time: { de
     return entities;
 };
 
-// Bird movement
-export const moveBird = (body: Matter.Body) => {
+// Bird movement with Flappy Bird feel
+export const moveBird = (body: Matter.Body): void => {
     Matter.Body.setVelocity(body, {
         x: 0,
-        y: JUMP_FORCE,
+        y: -8, // Moderate flap impulse
     });
-    Matter.Body.setAngle(body, -0.5); // Slight upward rotation on jump
+    // Add a slight upward rotation when jumping
+    Matter.Body.setAngle(body, -Math.PI / 8);
 }; 
