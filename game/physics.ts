@@ -134,7 +134,7 @@ export const createPipe = (x: number): { top: Matter.Body; bottom: Matter.Body }
 };
 
 // Game systems
-export const Physics = (entities: GameEntities, { time, dispatch }: { time: { delta: number }, dispatch: (event: { type: string }) => void }) => {
+export const Physics = (entities: GameEntities, { time, dispatch, gameState }: { time: { delta: number }, dispatch: (event: { type: string }) => void, gameState?: string }) => {
     const engine = entities.physics.engine;
     // Cap delta time at 16.667ms (60 FPS)
     const cappedDelta = Math.min(time.delta, 16.667);
@@ -145,15 +145,18 @@ export const Physics = (entities: GameEntities, { time, dispatch }: { time: { de
     const rotation = Math.min(Math.max(bird.velocity.y * BIRD_ROTATION_FACTOR, -Math.PI / 4), Math.PI / 2);
     Matter.Body.setAngle(bird, rotation);
 
-    // Check collisions
-    const collisions = Matter.Query.collides(bird, entities.pipes.map(pipe => pipe.body));
-    if (collisions.length > 0) {
-        dispatch({ type: 'game-over' });
-    }
+    // Only check collisions and boundaries when game is actively playing
+    if (gameState === 'PLAYING') {
+        // Check collisions
+        const collisions = Matter.Query.collides(bird, entities.pipes.map(pipe => pipe.body));
+        if (collisions.length > 0) {
+            dispatch({ type: 'game-over' });
+        }
 
-    // Check if bird is out of bounds
-    if (bird.position.y > SCREEN_HEIGHT || bird.position.y < 0) {
-        dispatch({ type: 'game-over' });
+        // Check if bird is out of bounds
+        if (bird.position.y > SCREEN_HEIGHT || bird.position.y < 0) {
+            dispatch({ type: 'game-over' });
+        }
     }
 
     return entities;

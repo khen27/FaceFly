@@ -122,67 +122,110 @@ function App() {
 
     const onEvent = (e: { type: string }) => {
         if (e.type === 'game-over') {
+            console.log('=== GAME OVER - SHOWING GAME OVER SCREEN ===');
+            
+            // Set game over state to show the game over screen
             setGameState(GAME_STATES.GAME_OVER);
+            
+            // Check and save high score
             if (score > highScore) {
+                console.log(`New high score! ${score} > ${highScore}`);
                 setHighScore(score);
                 saveHighScore(score).catch(console.log);
             }
-            setTimeout(() => {
-                resetGame();
-            }, 2000);
         }
     };
 
+    const handleRestart = () => {
+        console.log('=== RESTART BUTTON PRESSED ===');
+        resetGame();
+    };
+
     const resetGame = () => {
-        const engine = engineRef.current;
-        const bird = birdRef.current;
-        if (entities) {
-            // Remove all pipes from physics world
-            entities.pipes.forEach(pipe => {
-                Matter.World.remove(engine.world, pipe.body);
-            });
-            
-            // Remove dynamic pipe entities
-            Object.keys(entities).forEach(key => {
-                if (key.startsWith('pipe_')) {
-                    delete entities[key];
-                }
-            });
+        console.log('=== STARTING COMPLETE GAME RESET ===');
+        
+        // Step 1: Clear out old Matter.js world and engine state
+        const oldEngine = engineRef.current;
+        if (oldEngine && oldEngine.world) {
+            console.log('Clearing old Matter.js world and engine...');
+            Matter.World.clear(oldEngine.world, false);
+            Matter.Engine.clear(oldEngine);
         }
-        // Reset bird
-        Matter.Body.setPosition(bird, { x: SCREEN_WIDTH / 4, y: SCREEN_HEIGHT / 2 });
-        Matter.Body.setVelocity(bird, { x: 0, y: 0 });
-        Matter.Body.setAngle(bird, 0);
         
-        // Setup velocity clamping for Flappy Bird physics (needed after reset)
-        setupBirdVelocityClamping(engine, bird);
+        // Step 2: Re-create fresh engine and world instance
+        console.log('Creating fresh engine and world...');
+        const freshEngine = setupWorld();
+        const freshBird = createBird();
         
-        // Reset score and pipes
+        // Step 3: Explicitly set bird to original starting position
+        console.log('Setting bird to original position...');
+        Matter.Body.setPosition(freshBird, { 
+            x: SCREEN_WIDTH / 4, 
+            y: SCREEN_HEIGHT / 2 
+        });
+        Matter.Body.setVelocity(freshBird, { x: 0, y: 0 });
+        Matter.Body.setAngle(freshBird, 0);
+        
+        // Update refs to new instances
+        engineRef.current = freshEngine;
+        birdRef.current = freshBird;
+        
+        // Step 4: Re-initialize entities at original start coordinates
+        console.log('Re-initializing entities at start positions...');
+        
+        // Add bird to fresh world at initial position
+        Matter.World.add(freshEngine.world, [freshBird]);
+        
+        // Setup physics for the new bird
+        setupBirdVelocityClamping(freshEngine, freshBird);
+        
+        // Step 5: Reset all game-state flags/counters
+        console.log('Resetting all game state...');
         setScore(0);
-        setEntities({
-            physics: { engine, world: engine.world },
+        setGameState(GAME_STATES.READY);
+        setLastPipeSpawn(0);
+        
+        // Step 6: Create completely fresh entities with NO pipes
+        console.log('Creating fresh entities with cleared pipes...');
+        const freshEntities: GameEntities = {
+            physics: { 
+                engine: freshEngine, 
+                world: freshEngine.world 
+            },
             bird: {
-                body: bird,
+                body: freshBird,
                 size: 40,
                 renderer: Bird,
             },
-            pipes: [],
+            pipes: [], // Completely empty - pipes will respawn when game starts
             score: {
-                value: 0,
-                highScore: highScore,
+                value: 0, // Reset score counter
+                highScore: highScore, // Preserve high score
             },
             gameState: {
-                current: GAME_STATES.READY,
+                current: GAME_STATES.READY, // Reset to ready state
             },
-        });
-        setGameState(GAME_STATES.READY);
-        setLastPipeSpawn(0);
+        };
+        
+        // Trigger full re-render with fresh entities
+        setEntities(freshEntities);
+        
+        console.log('=== COMPLETE GAME RESET FINISHED ===');
+        console.log('Bird position reset to:', freshBird.position);
+        console.log('Bird velocity reset to:', freshBird.velocity);
+        console.log('All pipes cleared - count:', freshEntities.pipes.length);
+        console.log('Physics world bodies count:', freshEngine.world.bodies.length);
     };
 
     const startGame = () => {
         console.log('Starting game');
         setGameState(GAME_STATES.PLAYING);
         setLastPipeSpawn(0); // Reset spawn timer
+        
+        // Update entities game state to match
+        if (entities) {
+            entities.gameState.current = GAME_STATES.PLAYING;
+        }
     };
 
     // Pipe spawning system
@@ -340,7 +383,11 @@ function App() {
                     right: 0,
                     bottom: 0,
                 }]}
-                systems={[Physics, SpawnPipes, ScoreSystem]}
+                systems={[
+                    (entities: GameEntities, args: any) => Physics(entities, { ...args, gameState }),
+                    SpawnPipes, 
+                    ScoreSystem
+                ]}
                 entities={entities}
                 onEvent={onEvent}
                 running={gameState === GAME_STATES.PLAYING}
@@ -369,6 +416,11 @@ function App() {
                                 <Text style={[styles.gameOverText, styles.textShadow]}>Game Over</Text>
                                 <Text style={[styles.scoreText, styles.textShadow]}>Score: {score}</Text>
                                 <Text style={[styles.highScoreText, styles.textShadow]}>High Score: {highScore}</Text>
+                                <TouchableWithoutFeedback onPress={handleRestart}>
+                                    <View style={styles.restartButton}>
+                                        <Text style={[styles.restartButtonText, styles.textShadow]}>Restart</Text>
+                                    </View>
+                                </TouchableWithoutFeedback>
                             </View>
                         )}
                     </View>
@@ -425,6 +477,11 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         color: COLORS.TEXT,
     },
+    textShadow: {
+        textShadowColor: 'rgba(0, 0, 0, 0.75)',
+        textShadowOffset: { width: 2, height: 2 },
+        textShadowRadius: 2,
+    },
     gameOverContainer: {
         position: 'absolute',
         top: 0,
@@ -433,23 +490,35 @@ const styles = StyleSheet.create({
         bottom: 0,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: COLORS.GAME_OVER_BG,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        zIndex: 1,
     },
     gameOverText: {
-        fontSize: 48,
+        fontSize: 32,
         fontWeight: 'bold',
         color: COLORS.TEXT,
-        marginBottom: 20,
     },
     highScoreText: {
         fontSize: 24,
+        fontWeight: 'bold',
         color: COLORS.TEXT,
-        marginTop: 10,
     },
-    textShadow: {
-        textShadowColor: 'rgba(0, 0, 0, 0.75)',
-        textShadowOffset: { width: 2, height: 2 },
-        textShadowRadius: 2,
+    restartButton: {
+        marginTop: 30,
+        paddingHorizontal: 30,
+        paddingVertical: 15,
+        backgroundColor: COLORS.BIRD,
+        borderRadius: 10,
+        elevation: 3,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 3.84,
+    },
+    restartButtonText: {
+        fontSize: 24,
+        fontWeight: 'bold',
+        color: COLORS.TEXT,
     },
 });
 
