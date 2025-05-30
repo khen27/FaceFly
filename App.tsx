@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { registerRootComponent } from 'expo';
 import Matter from 'matter-js';
 import React, { useEffect, useRef, useState } from 'react';
-import { Keyboard, KeyboardEvent, Platform, StyleSheet, Text, TouchableWithoutFeedback, View } from 'react-native';
+import { ImageBackground, Keyboard, KeyboardEvent, Platform, StyleSheet, Text, TouchableWithoutFeedback, View } from 'react-native';
 import { GameEngine } from 'react-native-game-engine';
 
 import Bird from './components/Bird';
@@ -374,59 +374,65 @@ function App() {
 
     return (
         <View style={styles.container}>
-            <GameEngine
-                ref={gameEngineRef}
-                style={[styles.gameContainer, { 
-                    backgroundColor: COLORS.BACKGROUND,
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                }]}
-                systems={[
-                    (entities: GameEntities, args: any) => Physics(entities, { ...args, gameState }),
-                    SpawnPipes, 
-                    ScoreSystem
-                ]}
-                entities={entities}
-                onEvent={onEvent}
-                running={gameState === GAME_STATES.PLAYING}
+            <ImageBackground
+                source={require('./assets/background-night.png')}
+                style={StyleSheet.absoluteFill}
+                resizeMode="cover"
             >
-                <TouchableWithoutFeedback onPress={handleFlap}>
-                    <View style={[styles.touchableArea, { 
+                <GameEngine
+                    ref={gameEngineRef}
+                    style={[styles.gameContainer, {
+                        backgroundColor: 'transparent',
                         position: 'absolute',
                         top: 0,
                         left: 0,
                         right: 0,
                         bottom: 0,
-                        backgroundColor: 'transparent',
-                    }]}>
-                        {gameState === GAME_STATES.READY && (
-                            <View style={styles.readyContainer}>
-                                <Text style={[styles.readyText, styles.textShadow]}>
-                                    {__DEV__ && Platform.OS === 'ios' ? 'Tap or Press Space to Start' : 'Tap to Start'}
-                                </Text>
-                            </View>
-                        )}
-                        {gameState === GAME_STATES.PLAYING && (
-                            <Text style={[styles.scoreText, styles.textShadow]}>{score}</Text>
-                        )}
-                        {gameState === GAME_STATES.GAME_OVER && (
-                            <View style={styles.gameOverContainer}>
-                                <Text style={[styles.gameOverText, styles.textShadow]}>Game Over</Text>
-                                <Text style={[styles.scoreText, styles.textShadow]}>Score: {score}</Text>
-                                <Text style={[styles.highScoreText, styles.textShadow]}>High Score: {highScore}</Text>
-                                <TouchableWithoutFeedback onPress={handleRestart}>
-                                    <View style={styles.restartButton}>
-                                        <Text style={[styles.restartButtonText, styles.textShadow]}>Restart</Text>
-                                    </View>
-                                </TouchableWithoutFeedback>
-                            </View>
-                        )}
-                    </View>
-                </TouchableWithoutFeedback>
-            </GameEngine>
+                    }]}
+                    systems={[
+                        (entities: GameEntities, args: any) => Physics(entities, { ...args, gameState }),
+                        SpawnPipes,
+                        ScoreSystem
+                    ]}
+                    entities={entities}
+                    onEvent={onEvent}
+                    running={gameState === GAME_STATES.PLAYING}
+                >
+                    <TouchableWithoutFeedback onPress={handleFlap}>
+                        <View style={[styles.touchableArea, {
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            backgroundColor: 'transparent',
+                        }]}>
+                            {gameState === GAME_STATES.READY && (
+                                <View style={styles.readyContainer}>
+                                    <Text style={[styles.readyText, styles.textShadow]}>
+                                        {__DEV__ && Platform.OS === 'ios' ? 'Tap or Press Space to Start' : 'Tap to Start'}
+                                    </Text>
+                                </View>
+                            )}
+                            {gameState === GAME_STATES.PLAYING && (
+                                <Text style={[styles.scoreText, styles.textShadow]}>{score}</Text>
+                            )}
+                            {gameState === GAME_STATES.GAME_OVER && (
+                                <View style={styles.gameOverContainer}>
+                                    <Text style={[styles.gameOverText, styles.textShadow]}>Game Over</Text>
+                                    <Text style={[styles.scoreText, styles.textShadow]}>Score: {score}</Text>
+                                    <Text style={[styles.highScoreText, styles.textShadow]}>High Score: {highScore}</Text>
+                                    <TouchableWithoutFeedback onPress={handleRestart}>
+                                        <View style={styles.restartButton}>
+                                            <Text style={[styles.restartButtonText, styles.textShadow]}>Restart</Text>
+                                        </View>
+                                    </TouchableWithoutFeedback>
+                                </View>
+                            )}
+                        </View>
+                    </TouchableWithoutFeedback>
+                </GameEngine>
+            </ImageBackground>
         </View>
     );
 }
